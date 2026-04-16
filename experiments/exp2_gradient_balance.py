@@ -4,6 +4,12 @@ Claim: For the unscaled system (1.4), the ratio
     rho(phi) = ||grad_phi L_eq1|| / ||grad_phi L_eq2||
 is off by roughly alpha^-2; for the scaled system (1.5) it is O(1).
 
+This is a DIAGNOSTIC, so we use the raw residuals of (1.5) -- formulation
+"scaled_raw" in common.py -- not the loss-normalised "scaled" variant.
+The 1/a^{3/4} and 1/a^{1/4} factors on "scaled" are a legitimate training
+preconditioner, but they also rescale the very gradients we want to measure
+and would hide the balance property of the raw (1.5) system.
+
 Procedure: train each (alpha, formulation) with Adam(lr=1e-3) for 10000
 iterations, recording rho every 100 iterations. Additionally, save per-layer
 histograms of grad L_eq1 and grad L_eq2 at iteration 10000 for alpha=1e-4.
@@ -95,7 +101,12 @@ def main():
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
     colors = plt.cm.viridis(np.linspace(0, 0.9, len(ALPHAS_STANDARD)))
 
-    for ax, formulation in zip(axes, ("unscaled", "scaled")):
+    # Diagnostic uses the RAW residuals of (1.5), not the loss-normalised
+    # "scaled" form. The 1/a^{3/4} and 1/a^{1/4} factors on "scaled" are a
+    # legitimate training-time preconditioner but they also rescale the
+    # gradients whose ratio rho we are measuring here, which would hide the
+    # true balance property of (1.5). See common.py for the two branches.
+    for ax, formulation in zip(axes, ("unscaled", "scaled_raw")):
         for c, alpha in zip(colors, ALPHAS_STANDARD):
             seed_runs = []
             hist_eq1, hist_eq2 = {}, {}
@@ -135,7 +146,8 @@ def main():
         if formulation == "unscaled":
             ax.set_ylabel(r"$\rho(\phi)=\|\nabla L_{\mathrm{eq}_1}\|/\|\nabla L_{\mathrm{eq}_2}\|$")
         ax.axhline(1.0, color="k", lw=0.5, ls=":")
-        ax.set_title(f"{formulation} — (1.{'4' if formulation=='unscaled' else '5'})")
+        _system_label = {"unscaled": "1.4", "scaled_raw": "1.5"}[formulation]
+        ax.set_title(f"{formulation} — ({_system_label})")
         ax.grid(True, which="both", alpha=0.3)
         ax.legend(fontsize=8, loc="best")
 

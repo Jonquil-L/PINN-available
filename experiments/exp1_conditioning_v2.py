@@ -32,7 +32,6 @@ Output:
 from __future__ import annotations
 
 import csv
-import math
 import time
 from pathlib import Path
 
@@ -44,7 +43,6 @@ import numpy as np
 import torch
 
 from .common import (
-    ALPHAS_STANDARD,
     ManufacturedSolution,
     SEEDS_STANDARD,
     build_networks,
@@ -58,6 +56,17 @@ from .common import (
 N_R_EXP1 = 1000
 ITERS_SNAPSHOT = (0, 1000)
 LR_WARMUP = 1e-3
+
+# Alpha sweep for Exp 1. We drop alpha = 1e-8 here because kappa(J^T J) ~ 1e16
+# already at alpha = 1e-8 for (1.4), squaring to ~1e32-1e35, which exceeds the
+# reliable range of float64 eigvalsh and poisons the log-log slope fit.
+# ALPHAS_STANDARD in common.py is preserved for the other experiments.
+ALPHAS_EXP1 = (1.0, 1e-2, 1e-4, 1e-6)
+
+# Draw the iter-1000 snapshot as a second row of subplots. Off by default so
+# the figure focuses on the uncontaminated, deterministic iter-0 result.
+# The CSV still contains both snapshots regardless of this flag.
+PLOT_ITER_1000 = False
 
 
 # ---------------------------------------------------------------------------
@@ -81,57 +90,23 @@ def assemble_jacobian(net_y, net_p, x, mms, formulation) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
-# Randomized SVD for sigma_max and sigma_min.
+# Extremal singular values via direct Gram-matrix eigendecomposition.
 #
-# We use scipy.sparse.linalg.svds (ARPACK Lanczos bidiagonal) with k=1 and
-# which='LM' for sigma_max / which='SM' for sigma_min. svds operates on J
-# matrix-free via LinearOperator. This is the standard "randomized"
-# (Krylov-iterative) path used in the Halko-Martinsson-Tropp family; it is
-# much cheaper than full SVD (which would need ~ min(m,n)^3 work).
-#
-# Fallback: if SM is numerically unreliable (tight clusters of small sigmas),
-# form the smaller Gram matrix A = J J^T (size m x m where m = 2 N_r << P)
-# and take eigvalsh(A). Gives the exact spectrum and scales as O(m^3).
+# Because J has shape (2 N_r, P) with 2 N_r << P (here 2000 << ~1.57e4),
+# the smaller Gram factor A = J J^T is only 2 N_r x 2 N_r. Its spectrum
+# equals the non-zero singular values squared of J; np.linalg.eigvalsh(A)
+# returns them all at once in O((2 N_r)^3) flops -- both faster and more
+# numerically stable than shift-invert Lanczos for the smallest singular
+# value, which is what we actually care about for conditioning.
 # ---------------------------------------------------------------------------
 def sigma_extrema(J: torch.Tensor) -> tuple[float, float]:
-    from scipy.sparse.linalg import svds
-
     J_np = J.cpu().numpy()  # float64 already
-    m, n = J_np.shape
-
-    # sigma_max via Lanczos / randomized SVD
-    try:
-        _, s_top, _ = svds(J_np, k=1, which="LM", maxiter=2000, tol=1e-10)
-        sigma_max = float(s_top[-1])
-    except Exception:
-        sigma_max = _fallback_gram(J_np, which="max")
-
-    # sigma_min: SM-svds can fail on ill-conditioned matrices. Try it, then
-    # fall back to exact eigvalsh on the smaller Gram factor.
-    try:
-        _, s_bot, _ = svds(J_np, k=1, which="SM", maxiter=5000, tol=1e-10, solver="arpack")
-        sigma_min = float(s_bot[0])
-        # sanity check: if SM happens to return something larger than sigma_max (ARPACK bug
-        # on near-singular matrices), fall through to exact route.
-        if not (0.0 < sigma_min <= sigma_max):
-            raise RuntimeError("SM-svds gave a non-sensible value; falling back.")
-    except Exception:
-        sigma_min = _fallback_gram(J_np, which="min")
-
-    return sigma_max, sigma_min
-
-
-def _fallback_gram(J_np: np.ndarray, which: str) -> float:
-    m, n = J_np.shape
-    if m <= n:
-        A = J_np @ J_np.T
-    else:
-        A = J_np.T @ J_np
+    A = J_np @ J_np.T
     eigs = np.linalg.eigvalsh(A)
-    if which == "max":
-        return float(math.sqrt(max(eigs[-1], 0.0)))
-    else:
-        return float(math.sqrt(max(eigs[0], 0.0)))
+    eigs = np.clip(eigs, 0.0, None)
+    sigma_max = float(np.sqrt(eigs[-1]))
+    sigma_min = float(np.sqrt(max(eigs[0], 1e-300)))
+    return sigma_max, sigma_min
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +153,8 @@ def main():
 
     t0 = time.time()
     for snap in ITERS_SNAPSHOT:
-        for formulation in ("unscaled", "scaled"):
-            for alpha in ALPHAS_STANDARD:
+        for formulation in ("unscaled", "scaled_raw"):
+            for alpha in ALPHAS_EXP1:
                 smax_arr, smin_arr, kJ_arr, kJTJ_arr = [], [], [], []
                 for seed in seeds:
                     t_start = time.time()
@@ -218,21 +193,26 @@ def main():
         writer.writerows(rows)
     print(f"Wrote {csv_path}")
 
-    # Plot: one row per snapshot; two columns = kappa(J^T J) and kappa(J).
-    fig, axes = plt.subplots(len(ITERS_SNAPSHOT), 2, figsize=(12, 4.5 * len(ITERS_SNAPSHOT)))
-    if len(ITERS_SNAPSHOT) == 1:
-        axes = np.expand_dims(axes, 0)
-    for r_idx, snap in enumerate(ITERS_SNAPSHOT):
-        for c_idx, (metric_mean, metric_std, ylabel) in enumerate(
-            [
-                ("kappa_JTJ_mean", "kappa_JTJ_std", r"$\kappa(J^\top J)$"),
-                ("kappa_J_mean", "kappa_J_std", r"$\kappa(J)=\sigma_{\max}/\sigma_{\min}$"),
-            ]
-        ):
+    # Plot. kappa(J) is the primary quantity (left panel); kappa(J^T J) is the
+    # derived secondary (right panel). Show only iter=0 unless the user opts
+    # in to the iter=1000 row via PLOT_ITER_1000.
+    snaps_to_plot = list(ITERS_SNAPSHOT) if PLOT_ITER_1000 else [0]
+    n_rows = len(snaps_to_plot)
+    fig, axes = plt.subplots(n_rows, 2, figsize=(12, 4.5 * n_rows), squeeze=False)
+
+    panel_spec = [
+        ("kappa_J_mean",   "kappa_J_std",   r"$\kappa(J)=\sigma_{\max}/\sigma_{\min}$",
+         {"unscaled": "-1", "scaled_raw": "-0.5"}),
+        ("kappa_JTJ_mean", "kappa_JTJ_std", r"$\kappa(J^\top J)$",
+         {"unscaled": "-2", "scaled_raw": "-1"}),
+    ]
+
+    for r_idx, snap in enumerate(snaps_to_plot):
+        for c_idx, (metric_mean, metric_std, ylabel, expected) in enumerate(panel_spec):
             ax = axes[r_idx, c_idx]
             for formulation, marker, color in (
                 ("unscaled", "o", "tomato"),
-                ("scaled", "s", "steelblue"),
+                ("scaled_raw", "s", "steelblue"),
             ):
                 data = [r for r in rows if r["snapshot"] == snap and r["formulation"] == formulation]
                 data.sort(key=lambda r: r["alpha"])
@@ -243,9 +223,8 @@ def main():
                 ax.errorbar(
                     a, mu, yerr=sd,
                     fmt=f"{marker}-", color=color, capsize=3,
-                    label=f"{formulation} (slope {slope:+.2f})",
+                    label=f"{formulation} (fit slope {slope:+.2f}, expected {expected[formulation]})",
                 )
-                # linear fit overlay
                 a_fit = np.geomspace(a.min(), a.max(), 50)
                 ax.plot(a_fit, 10 ** (intercept + slope * np.log10(a_fit)),
                         color=color, lw=0.8, ls=":")
@@ -256,9 +235,11 @@ def main():
             ax.set_title(f"snapshot: iter {snap}")
             ax.grid(True, which="both", alpha=0.3)
             ax.legend()
+
     fig.suptitle(
         r"Experiment 1 — Jacobian conditioning vs $\alpha$   "
-        r"(expected slopes: $-2$ unscaled, $-1$ scaled for $\kappa(J^\top J)$)"
+        r"(expected slopes: $\kappa(J)$: $-1$ unscaled, $-0.5$ scaled_raw  ·  "
+        r"$\kappa(J^\top J)$: $-2$ unscaled, $-1$ scaled_raw)"
     )
     plt.tight_layout()
     png = out_dir / "exp1_conditioning_v2.png"

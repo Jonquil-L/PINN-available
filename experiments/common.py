@@ -179,7 +179,7 @@ def predict(net_y: nn.Module, net_p: nn.Module, x: torch.Tensor) -> tuple[torch.
 # computed by the loss helpers below so that experiments can also access the
 # residual vector directly (for Jacobian assembly, per-term diagnostics, etc).
 # ---------------------------------------------------------------------------
-Formulation = Literal["unscaled", "scaled"]
+Formulation = Literal["unscaled", "scaled", "scaled_raw"]
 
 
 def residuals(
@@ -207,6 +207,16 @@ def residuals(
         # Scaled residuals are then divided by a34 / a14 to normalize loss.
         r1 = (-a12 * lap_y + p - a34 * (f + ud)) / a34
         r2 = (-a12 * lap_p - y + a14 * yd) / a14
+    elif formulation == "scaled_raw":
+        # Raw residuals of system (1.5), WITHOUT the loss-level normalisation
+        # by a34 / a14. Use this for spectral diagnostics (Exp 1: Jacobian
+        # conditioning; Exp 2: gradient balance) so that the measured kappa(J)
+        # matches the theoretical alpha-scaling prediction. Training losses
+        # should stay with "scaled" — the division is legitimate preconditioning
+        # at training time but changes J's spectrum and would bias diagnostics.
+        a12, a34, a14 = a ** 0.5, a ** 0.75, a ** 0.25
+        r1 = -a12 * lap_y + p - a34 * (f + ud)
+        r2 = -a12 * lap_p - y + a14 * yd
     else:  # pragma: no cover
         raise ValueError(formulation)
     return r1, r2
