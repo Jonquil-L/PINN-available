@@ -8,7 +8,8 @@ Each experiment isolates one mechanism that (1.5) is claimed to improve:
 
 | # | File | Mechanism |
 |---|------|-----------|
-| 1 | `experiments/exp1_conditioning.py`      | Jacobian conditioning: κ(JᵀJ) vs α |
+| 1 | `experiments/exp1_conditioning.py`      | Jacobian conditioning: κ(JᵀJ) vs α — **quick variant** (small net 2×20, dense SVD) |
+| 1b | `experiments/exp1_conditioning_v2.py`  | Jacobian conditioning — **spec-faithful variant** (full 4×50 net, randomized SVD, 5 seeds) |
 | 2 | `experiments/exp2_gradient_balance.py`  | Gradient ratio ρ = ‖∇L₁‖/‖∇L₂‖ during training |
 | 3 | `experiments/exp3_stable_lr.py`         | Maximum stable Adam learning rate |
 | 4 | `experiments/exp4_float_stability.py`   | Float32 vs float64 term contributions |
@@ -59,7 +60,8 @@ the env var `PINN_DEVICE=cpu|mps|cuda` (see `common.pick_device`).
 Run each experiment from the repo root as a module:
 
 ```bash
-python -m experiments.exp1_conditioning
+python -m experiments.exp1_conditioning     # quick variant (small net, dense SVD)
+python -m experiments.exp1_conditioning_v2  # spec variant (full net, randomized SVD)
 python -m experiments.exp2_gradient_balance
 python -m experiments.exp3_stable_lr
 python -m experiments.exp4_float_stability
@@ -108,7 +110,8 @@ Each experiment writes its outputs (CSV + PNG) into `results/`.
 PINN-available/
 ├── experiments/
 │   ├── common.py                 # shared modules
-│   ├── exp1_conditioning.py
+│   ├── exp1_conditioning.py         # quick variant
+│   ├── exp1_conditioning_v2.py      # full-net + randomized SVD
 │   ├── exp2_gradient_balance.py
 │   ├── exp3_stable_lr.py
 │   ├── exp4_float_stability.py
