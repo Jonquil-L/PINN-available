@@ -15,7 +15,6 @@ Output:
 from __future__ import annotations
 
 import csv
-import os
 import time
 from pathlib import Path
 

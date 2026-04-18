@@ -1,4 +1,6 @@
-torch>=2.1
-numpy>=1.24
+# PyTorch with CUDA 12.9 support (Windows 11 / Python 3.10)
+# Install via:  pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cu129
+torch>=2.6
+numpy>=1.24,<2.0
 scipy>=1.10
 matplotlib>=3.7

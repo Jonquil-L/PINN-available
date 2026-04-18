@@ -13,3 +13,6 @@ results/
 !experiments/**/expected_*.csv
 .vscode/
 .idea/
+Thumbs.db
+Desktop.ini
+*.egg-info/

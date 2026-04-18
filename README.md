@@ -48,20 +48,44 @@ u*(x) = -sin(π x₁) sin(π x₂)
 
 ## Install
 
+### Windows 11 + CUDA 12.9 (recommended)
+
+Requires **Python 3.10** and an NVIDIA GPU with **CUDA 12.9** drivers.
+
+**Option A — one-click script:**
+```cmd
+install_win.bat
+```
+
+**Option B — manual:**
+```cmd
+pip install torch --index-url https://download.pytorch.org/whl/cu129
+pip install "numpy>=1.24,<2.0" "scipy>=1.10" "matplotlib>=3.7"
+```
+
+Verify CUDA is visible:
+```cmd
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+### macOS / Linux
+
 ```bash
 pip install -r requirements.txt
 ```
+On macOS the PyPI wheel is CPU+MPS; on Linux you may want the CUDA
+index: `pip install torch --index-url https://download.pytorch.org/whl/cu129`.
 
-## Running (Linux / macOS / Apple Silicon)
+## Running
 
-Device is auto-selected in this order: **MPS → CUDA → CPU**. Override with
+Device is auto-selected in this order: **CUDA → MPS → CPU**. Override with
 the env var `PINN_DEVICE=cpu|mps|cuda` (see `common.pick_device`).
 
-Run each experiment from the repo root as a module:
+Run each experiment from the repo root:
 
 ```bash
 python -m experiments.exp1_conditioning     # quick variant (small net, dense SVD)
-python -m experiments.exp1_conditioning_v2  # spec variant (full net, randomized SVD)
+python -m experiments.exp1_conditioning_v2  # spec variant (full net, Gram eigvalsh)
 python -m experiments.exp2_gradient_balance
 python -m experiments.exp3_stable_lr
 python -m experiments.exp4_float_stability
@@ -71,12 +95,14 @@ python -m experiments.exp6_adaptive_ablation
 
 Each experiment writes its outputs (CSV + PNG) into `results/`.
 
-### Apple Silicon / MPS notes
+### Platform notes
 
-- MPS is used automatically when available.
-- Experiment 4 requires **float64** for the reference precision column;
-  that branch is pinned to **CPU** (the other columns still use MPS).
-- All other experiments run in float32 on MPS without modification.
+| Platform | Device | float64 support | Notes |
+|----------|--------|----------------|-------|
+| Windows 11 + CUDA 12.9 | `cuda` | full | Primary target of this branch |
+| macOS Apple Silicon | `mps` | partial → Exp 4 falls back to CPU | Auto-detected after CUDA |
+| Linux + CUDA | `cuda` | full | Works identically to Windows |
+| CPU-only | `cpu` | full | Fallback; slower but fully functional |
 
 ## Common setup (shared across all experiments)
 

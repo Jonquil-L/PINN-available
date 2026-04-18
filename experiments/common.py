@@ -37,16 +37,20 @@ from scipy.stats import qmc
 
 
 # ---------------------------------------------------------------------------
-# Device selection: MPS (Apple) > CUDA > CPU. Callers can force via env var
-# PINN_DEVICE=cpu|mps|cuda or by passing a torch.device explicitly.
+# Device selection: CUDA > MPS > CPU. Override via env var PINN_DEVICE or
+# the `prefer` argument.  CUDA is checked first so Windows+NVIDIA setups
+# (the primary target for this branch) land on GPU automatically.
 # ---------------------------------------------------------------------------
 def pick_device(prefer: str | None = None) -> torch.device:
+    import os
+    if prefer is None:
+        prefer = os.environ.get("PINN_DEVICE")
     if prefer is not None:
         return torch.device(prefer)
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return torch.device("mps")
     if torch.cuda.is_available():
         return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
     return torch.device("cpu")
 
 
