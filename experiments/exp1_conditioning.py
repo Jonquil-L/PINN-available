@@ -89,7 +89,7 @@ def main():
     out_dir.mkdir(exist_ok=True)
 
     snapshots = [0, 1000]
-    formulations = ("unscaled", "scaled")
+    formulations = ("unscaled", "scaled_raw")
     seeds = (0, 1, 2)  # conditioning is deterministic-ish; 3 seeds is plenty
 
     rows = []
@@ -128,7 +128,7 @@ def main():
     # Plot (only the at-init snapshot, with linear fits in log-log)
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
     for ax, snap in zip(axes, snapshots):
-        for formulation, marker, color in (("unscaled", "o", "tomato"), ("scaled", "s", "steelblue")):
+        for formulation, marker, color in (("unscaled", "o", "tomato"), ("scaled_raw", "s", "steelblue")):
             data = [r for r in rows if r["snapshot"] == snap and r["formulation"] == formulation]
             data.sort(key=lambda r: r["alpha"])
             a = np.array([r["alpha"] for r in data])

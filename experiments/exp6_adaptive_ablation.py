@@ -89,7 +89,7 @@ def train_adaptive(alpha, seed, device):
         loss.backward()
         opt.step()
 
-    return relative_l2_errors(net_y, net_p, mms, device)
+    return relative_l2_errors(net_y, net_p, mms, device, formulation="unscaled")
 
 
 def train_plain(alpha, formulation, seed, device):
@@ -107,7 +107,7 @@ def train_plain(alpha, formulation, seed, device):
         loss.backward()
         opt.step()
 
-    return relative_l2_errors(net_y, net_p, mms, device)
+    return relative_l2_errors(net_y, net_p, mms, device, formulation=formulation)
 
 
 def main():
@@ -115,7 +115,7 @@ def main():
     out_dir = Path("results")
     out_dir.mkdir(exist_ok=True)
 
-    methods = ("unscaled", "unscaled+adaptive", "scaled")
+    methods = ("unscaled", "unscaled+adaptive", "scaled_raw")
     rows = []
     t0 = time.time()
     for method in methods:
@@ -124,8 +124,8 @@ def main():
             for seed in SEEDS_STANDARD:
                 if method == "unscaled":
                     errs = train_plain(alpha, "unscaled", seed, device)
-                elif method == "scaled":
-                    errs = train_plain(alpha, "scaled", seed, device)
+                elif method == "scaled_raw":
+                    errs = train_plain(alpha, "scaled_raw", seed, device)
                 else:
                     errs = train_adaptive(alpha, seed, device)
                 if errs is None:
@@ -153,7 +153,7 @@ def main():
     style = {
         "unscaled":           ("o", "tomato"),
         "unscaled+adaptive":  ("^", "darkgreen"),
-        "scaled":             ("s", "steelblue"),
+        "scaled_raw":         ("s", "steelblue"),
     }
     for ax, var, label in zip(axes, ("l2_y", "l2_p", "l2_u"), (r"$\bar y$", r"$\bar p$", r"$\bar u$")):
         for method in methods:

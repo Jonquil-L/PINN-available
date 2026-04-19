@@ -83,20 +83,19 @@ def compute_term_contributions(alpha: float, formulation: str, dtype: torch.dtyp
             "||r1||^2": (r1 ** 2).mean().item(),
             "||r2||^2": (r2 ** 2).mean().item(),
         }
-    else:  # scaled
+    else:  # scaled_raw: raw residuals of (1.5), NO division
         a12, a34, a14 = alpha ** 0.5, alpha ** 0.75, alpha ** 0.25
-        # residual divided by a34 and a14 as in common.residuals
-        r1_s = (-a12 * lap_y + p - a34 * (f + ud)) / a34
-        r2_s = (-a12 * lap_p - y + a14 * yd) / a14
+        r1 = -a12 * lap_y + p - a34 * (f + ud)
+        r2 = -a12 * lap_p - y + a14 * yd
         out = {
-            "||a^{1/2} Delta y / a^{3/4}||^2": ((a12 * lap_y / a34) ** 2).mean().item(),
-            "||p / a^{3/4}||^2": ((p / a34) ** 2).mean().item(),
-            "||f+u_d||^2": ((f + ud) ** 2).mean().item(),  # pre-divided term is just this
-            "||a^{1/2} Delta p / a^{1/4}||^2": ((a12 * lap_p / a14) ** 2).mean().item(),
-            "||y / a^{1/4}||^2": ((y / a14) ** 2).mean().item(),
-            "||y_d||^2": (yd ** 2).mean().item(),
-            "||r1||^2": (r1_s ** 2).mean().item(),
-            "||r2||^2": (r2_s ** 2).mean().item(),
+            "||a^{1/2} Delta y||^2": ((a12 * lap_y) ** 2).mean().item(),
+            "||p||^2": (p ** 2).mean().item(),
+            "||a^{3/4}(f+u_d)||^2": ((a34 * (f + ud)) ** 2).mean().item(),
+            "||a^{1/2} Delta p||^2": ((a12 * lap_p) ** 2).mean().item(),
+            "||y||^2": (y ** 2).mean().item(),
+            "||a^{1/4} y_d||^2": ((a14 * yd) ** 2).mean().item(),
+            "||r1||^2": (r1 ** 2).mean().item(),
+            "||r2||^2": (r2 ** 2).mean().item(),
         }
     return out
 
@@ -110,7 +109,7 @@ def main():
 
     rows = []
     for alpha in ALPHAS_STANDARD:
-        for formulation in ("unscaled", "scaled"):
+        for formulation in ("unscaled", "scaled_raw"):
             terms32 = compute_term_contributions(alpha, formulation, torch.float32, device_f32)
             terms64 = compute_term_contributions(alpha, formulation, torch.float64, device_f64)
             for precision, terms in (("float32", terms32), ("float64", terms64)):

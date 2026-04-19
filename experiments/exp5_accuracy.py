@@ -56,7 +56,7 @@ def train_once(alpha: float, formulation: str, seed: int, device):
         loss.backward()
         opt.step()
 
-    errs = relative_l2_errors(net_y, net_p, mms, device)
+    errs = relative_l2_errors(net_y, net_p, mms, device, formulation=formulation)
     return errs
 
 
@@ -67,7 +67,7 @@ def main():
 
     rows = []
     t0 = time.time()
-    for formulation in ("unscaled", "scaled"):
+    for formulation in ("unscaled", "scaled_raw"):
         for alpha in ALPHAS_STANDARD:
             per_seed = {"l2_y": [], "l2_p": [], "l2_u": []}
             for seed in SEEDS_STANDARD:
@@ -95,7 +95,7 @@ def main():
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     for ax, var, label in zip(axes, ("l2_y", "l2_p", "l2_u"), (r"$\bar y$", r"$\bar p$", r"$\bar u$")):
-        for formulation, marker, color in (("unscaled", "o", "tomato"), ("scaled", "s", "steelblue")):
+        for formulation, marker, color in (("unscaled", "o", "tomato"), ("scaled_raw", "s", "steelblue")):
             data = [r for r in rows if r["formulation"] == formulation]
             data.sort(key=lambda r: r["alpha"])
             a = np.array([r["alpha"] for r in data])

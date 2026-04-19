@@ -81,6 +81,14 @@ class ManufacturedSolution:
     def exact_u(self, x: torch.Tensor) -> torch.Tensor:
         return -self._phi(x)
 
+    def exact_y_scaled(self, x: torch.Tensor) -> torch.Tensor:
+        """y_scaled = alpha^{1/4} * y_bar_star = alpha^{1/4} * phi."""
+        return self.alpha ** 0.25 * self._phi(x)
+
+    def exact_p_scaled(self, x: torch.Tensor) -> torch.Tensor:
+        """p_scaled = alpha^{-1/4} * p_bar_star = alpha^{3/4} * phi."""
+        return self.alpha ** 0.75 * self._phi(x)
+
     def source_f(self, x: torch.Tensor) -> torch.Tensor:
         # f + u_d = (2 pi^2 + 1) phi, with u_d = 0.
         return (2.0 * math.pi ** 2 + 1.0) * self._phi(x)
@@ -188,7 +196,7 @@ def predict(net_y: nn.Module, net_p: nn.Module, x: torch.Tensor) -> tuple[torch.
 # computed by the loss helpers below so that experiments can also access the
 # residual vector directly (for Jacobian assembly, per-term diagnostics, etc).
 # ---------------------------------------------------------------------------
-Formulation = Literal["unscaled", "scaled", "scaled_raw"]
+Formulation = Literal["unscaled", "scaled_normalized", "scaled_raw"]
 
 
 def residuals(
@@ -211,9 +219,10 @@ def residuals(
     if formulation == "unscaled":
         r1 = -lap_y - (f + ud) + (1.0 / a) * p
         r2 = -lap_p - y + yd
-    elif formulation == "scaled":
+    elif formulation == "scaled_normalized":
+        # HISTORICAL: loss-level preconditioning that divides by a^{3/4} and
+        # a^{1/4}. Kept as a reference; no experiment should use this.
         a12, a34, a14 = a ** 0.5, a ** 0.75, a ** 0.25
-        # Scaled residuals are then divided by a34 / a14 to normalize loss.
         r1 = (-a12 * lap_y + p - a34 * (f + ud)) / a34
         r2 = (-a12 * lap_p - y + a14 * yd) / a14
     elif formulation == "scaled_raw":
@@ -221,8 +230,8 @@ def residuals(
         # by a34 / a14. Use this for spectral diagnostics (Exp 1: Jacobian
         # conditioning; Exp 2: gradient balance) so that the measured kappa(J)
         # matches the theoretical alpha-scaling prediction. Training losses
-        # should stay with "scaled" — the division is legitimate preconditioning
-        # at training time but changes J's spectrum and would bias diagnostics.
+        # "scaled_normalized" keeps the division as a historical reference but
+        # all current experiments use "scaled_raw" for both training and diagnostics.
         a12, a34, a14 = a ** 0.5, a ** 0.75, a ** 0.25
         r1 = -a12 * lap_y + p - a34 * (f + ud)
         r2 = -a12 * lap_p - y + a14 * yd
@@ -272,20 +281,32 @@ def relative_l2_errors(
     net_p: nn.Module,
     mms: ManufacturedSolution,
     device: torch.device,
+    formulation: Formulation = "unscaled",
     n: int = 100,
 ) -> dict[str, float]:
     x, y_pred, p_pred = _grid_eval(net_y, net_p, mms, device, n)
-    y_exact = mms.exact_y(x)
-    p_exact = mms.exact_p(x)
-    u_pred = -p_pred / mms.alpha
-    u_exact = mms.exact_u(x)
+
+    # When training with "scaled_raw", the networks learn the scaled variables
+    #   y_net = alpha^{1/4} y_bar,   p_net = alpha^{3/4} p_bar / alpha = alpha^{-1/4} p_bar.
+    # Convert back to physical (unscaled) variables before computing errors.
+    if formulation == "scaled_raw":
+        y_phys = y_pred / mms.alpha ** 0.25
+        p_phys = p_pred * mms.alpha ** 0.25
+    else:
+        y_phys = y_pred
+        p_phys = p_pred
+
+    y_exact = mms.exact_y(x)   # phi  (unscaled y_bar*)
+    p_exact = mms.exact_p(x)   # alpha * phi  (unscaled p_bar*)
+    u_pred = -p_phys / mms.alpha
+    u_exact = mms.exact_u(x)   # -phi
 
     def rel(a: torch.Tensor, b: torch.Tensor) -> float:
         num = torch.sqrt(((a - b) ** 2).sum())
         den = torch.sqrt((b ** 2).sum()).clamp_min(1e-30)
         return (num / den).item()
 
-    return {"l2_y": rel(y_pred, y_exact), "l2_p": rel(p_pred, p_exact), "l2_u": rel(u_pred, u_exact)}
+    return {"l2_y": rel(y_phys, y_exact), "l2_p": rel(p_phys, p_exact), "l2_u": rel(u_pred, u_exact)}
 
 
 # ---------------------------------------------------------------------------

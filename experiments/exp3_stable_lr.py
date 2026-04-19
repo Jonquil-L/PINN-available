@@ -99,7 +99,7 @@ def main():
     out_dir.mkdir(exist_ok=True)
 
     rows = []
-    formulations: tuple[Formulation, ...] = ("unscaled", "scaled")
+    formulations: tuple[Formulation, ...] = ("unscaled", "scaled_raw")
     for formulation in formulations:
         for alpha in ALPHAS_STANDARD:
             eta_max = 0.0
@@ -124,7 +124,7 @@ def main():
     print(f"Wrote {csv_path}")
 
     fig, ax = plt.subplots(figsize=(6, 4.5))
-    for formulation, marker, color in (("unscaled", "o", "tomato"), ("scaled", "s", "steelblue")):
+    for formulation, marker, color in (("unscaled", "o", "tomato"), ("scaled_raw", "s", "steelblue")):
         data = [r for r in rows if r["formulation"] == formulation]
         data.sort(key=lambda r: r["alpha"])
         a = np.array([r["alpha"] for r in data])

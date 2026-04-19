@@ -78,7 +78,7 @@ except ImportError:
     )
 
 N_R_EXP1 = 1000
-ITERS_SNAPSHOT = (0, 1000)
+ITERS_SNAPSHOT = (0,)
 LR_WARMUP = 1e-3
 
 # Alpha sweep for Exp 1. We drop alpha = 1e-8 here because kappa(J^T J) ~ 1e16
