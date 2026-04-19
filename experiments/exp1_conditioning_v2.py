@@ -32,8 +32,17 @@ Output:
 from __future__ import annotations
 
 import csv
+import math
+import os
+import platform
+import sys
 import time
 from pathlib import Path
+
+# Windows workaround for duplicated OpenMP runtime (libiomp5md.dll) in mixed
+# scientific Python stacks. Must be set before importing torch/numpy/scipy.
+if platform.system() == "Windows":
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import matplotlib
 
@@ -42,16 +51,31 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from .common import (
-    ManufacturedSolution,
-    SEEDS_STANDARD,
-    build_networks,
-    param_list,
-    pick_device,
-    residuals,
-    sample_interior,
-    total_loss,
-)
+try:
+    from .common import (
+        Formulation,
+        ManufacturedSolution,
+        SEEDS_STANDARD,
+        build_networks,
+        param_list,
+        pick_device,
+        residuals,
+        sample_interior,
+        total_loss,
+    )
+except ImportError:
+    # Allow running this file directly: python experiments/exp1_conditioning_v2.py
+    from common import (
+        Formulation,
+        ManufacturedSolution,
+        SEEDS_STANDARD,
+        build_networks,
+        param_list,
+        pick_device,
+        residuals,
+        sample_interior,
+        total_loss,
+    )
 
 N_R_EXP1 = 1000
 ITERS_SNAPSHOT = (0, 1000)
@@ -112,7 +136,7 @@ def sigma_extrema(J: torch.Tensor) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 # One point (alpha, formulation, seed, snapshot iter)
 # ---------------------------------------------------------------------------
-def one_point(alpha: float, formulation: str, seed: int, device, snapshot_iter: int):
+def one_point(alpha: float, formulation: Formulation, seed: int, device, snapshot_iter: int):
     torch.manual_seed(seed)
     mms = ManufacturedSolution(alpha)
     net_y, net_p = build_networks(device, seed=seed)  # full net: 4x50 tanh
@@ -131,11 +155,15 @@ def one_point(alpha: float, formulation: str, seed: int, device, snapshot_iter: 
     sigma_max, sigma_min = sigma_extrema(J)
     # Guard floor for log-plots.
     sigma_min = max(sigma_min, 1e-300)
+    kappa_j = sigma_max / sigma_min
+    # Avoid OverflowError for extreme conditioning at tiny alpha.
+    max_float = sys.float_info.max
+    kappa_jtj = max_float if kappa_j > math.sqrt(max_float) else kappa_j * kappa_j
     return {
         "sigma_max": sigma_max,
         "sigma_min": sigma_min,
-        "kappa_J": sigma_max / sigma_min,
-        "kappa_JTJ": (sigma_max / sigma_min) ** 2,
+        "kappa_J": kappa_j,
+        "kappa_JTJ": kappa_jtj,
         "J_shape": tuple(J.shape),
     }
 
@@ -145,6 +173,11 @@ def one_point(alpha: float, formulation: str, seed: int, device, snapshot_iter: 
 # ---------------------------------------------------------------------------
 def main():
     device = pick_device()
+    if device.type == "cuda":
+        gpu_name = torch.cuda.get_device_name(device)
+        print(f"Running on device: {device} ({gpu_name})")
+    else:
+        print(f"Running on device: {device}")
     out_dir = Path("results")
     out_dir.mkdir(exist_ok=True)
 
@@ -152,8 +185,9 @@ def main():
     seeds = SEEDS_STANDARD  # 5 seeds per spec's common setup
 
     t0 = time.time()
+    formulations: tuple[Formulation, ...] = ("unscaled", "scaled_raw")
     for snap in ITERS_SNAPSHOT:
-        for formulation in ("unscaled", "scaled_raw"):
+        for formulation in formulations:
             for alpha in ALPHAS_EXP1:
                 smax_arr, smin_arr, kJ_arr, kJTJ_arr = [], [], [], []
                 for seed in seeds:

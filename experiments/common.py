@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence, cast
 
 import numpy as np
 import torch
@@ -138,7 +138,12 @@ def hard_bc(x: torch.Tensor, raw: torch.Tensor) -> torch.Tensor:
 # Sampling. Latin-hypercube interior + boundary samples (reproducible).
 # ---------------------------------------------------------------------------
 def sample_interior(n: int, seed: int, device: torch.device, dtype: torch.dtype = torch.float32) -> torch.Tensor:
-    sampler = qmc.LatinHypercube(d=2, seed=seed)
+    # SciPy changed this API from `seed` to `rng` across versions.
+    lhs_ctor = cast(Any, qmc.LatinHypercube)
+    try:
+        sampler = lhs_ctor(d=2, rng=np.random.default_rng(seed))
+    except TypeError:
+        sampler = lhs_ctor(d=2, seed=seed)
     pts = sampler.random(n)
     return torch.as_tensor(pts, dtype=dtype, device=device)
 

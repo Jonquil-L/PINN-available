@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import math
+import time
 from pathlib import Path
 
 import matplotlib
@@ -25,21 +26,36 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from .common import (
-    ALPHAS_STANDARD,
-    ManufacturedSolution,
-    build_networks,
-    param_list,
-    pick_device,
-    sample_interior,
-    total_loss,
-)
+try:
+    from .common import (
+        ALPHAS_STANDARD,
+        Formulation,
+        ManufacturedSolution,
+        build_networks,
+        param_list,
+        pick_device,
+        sample_interior,
+        total_loss,
+    )
+except ImportError:
+    # Allow running this file directly: python experiments/exp1_conditioning_v2.py
+    from common import (
+        ALPHAS_STANDARD,
+        Formulation,
+        ManufacturedSolution,
+        build_networks,
+        param_list,
+        pick_device,
+        sample_interior,
+        total_loss,
+    )
+
 
 ITERS = 20_000
 LR_SWEEP = (1e-1, 3e-2, 1e-2, 3e-3, 1e-3, 3e-4, 1e-4, 3e-5, 1e-5, 1e-6)
 
 
-def run_trial(alpha: float, formulation: str, lr: float, seed: int, device) -> bool:
+def run_trial(alpha: float, formulation: Formulation, lr: float, seed: int, device) -> bool:
     torch.manual_seed(seed)
     mms = ManufacturedSolution(alpha)
     net_y, net_p = build_networks(device, seed=seed)
@@ -78,16 +94,23 @@ def run_trial(alpha: float, formulation: str, lr: float, seed: int, device) -> b
 
 def main():
     device = pick_device()
+    print(f"Using device: {device}")
     out_dir = Path("results")
     out_dir.mkdir(exist_ok=True)
 
     rows = []
-    for formulation in ("unscaled", "scaled"):
+    formulations: tuple[Formulation, ...] = ("unscaled", "scaled")
+    for formulation in formulations:
         for alpha in ALPHAS_STANDARD:
             eta_max = 0.0
             for lr in sorted(LR_SWEEP, reverse=True):
+                t_start = time.time()
                 ok = run_trial(alpha, formulation, lr, seed=0, device=device)
-                print(f"{formulation:<8s} alpha={alpha:.0e} lr={lr:.0e} -> {'stable' if ok else 'unstable'}")
+                dt = time.time() - t_start
+                print(
+                    f"{formulation:<8s} alpha={alpha:.0e} lr={lr:.0e} -> "
+                    f"{'stable' if ok else 'unstable'} ({dt:.1f}s)"
+                )
                 if ok:
                     eta_max = lr
                     break  # biggest stable lr found

@@ -32,6 +32,7 @@ import torch
 
 from .common import (
     ALPHAS_STANDARD,
+    Formulation,
     ManufacturedSolution,
     build_networks,
     flat_grad,
@@ -46,7 +47,7 @@ RECORD_EVERY = 100
 SEEDS = (0, 1, 2)
 
 
-def run_one(alpha: float, formulation: str, seed: int, device, collect_layer_hists: bool):
+def run_one(alpha: float, formulation: Formulation, seed: int, device, collect_layer_hists: bool):
     torch.manual_seed(seed)
     mms = ManufacturedSolution(alpha)
     net_y, net_p = build_networks(device, seed=seed)
@@ -98,14 +99,15 @@ def main():
     iters_axis = np.arange(0, ITERS + 1, RECORD_EVERY)
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
-    colors = plt.cm.viridis(np.linspace(0, 0.9, len(ALPHAS_STANDARD)))
+    colors = plt.get_cmap("viridis")(np.linspace(0, 0.9, len(ALPHAS_STANDARD)))
 
     # Diagnostic uses the RAW residuals of (1.5), not the loss-normalised
     # "scaled" form. The 1/a^{3/4} and 1/a^{1/4} factors on "scaled" are a
     # legitimate training-time preconditioner but they also rescale the
     # gradients whose ratio rho we are measuring here, which would hide the
     # true balance property of (1.5). See common.py for the two branches.
-    for ax, formulation in zip(axes, ("unscaled", "scaled_raw")):
+    formulations: tuple[Formulation, ...] = ("unscaled", "scaled_raw")
+    for ax, formulation in zip(axes, formulations):
         for c, alpha in zip(colors, ALPHAS_STANDARD):
             seed_runs = []
             hist_eq1, hist_eq2 = {}, {}
