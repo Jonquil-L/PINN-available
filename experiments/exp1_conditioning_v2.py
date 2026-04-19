@@ -16,12 +16,11 @@ Procedure (follows the spec):
 Plot: log kappa(J^T J) vs log alpha with linear fits. Expected slopes -2
 for (1.4), -1 for (1.5).
 
-Net architecture: the full dual-net MLP used across the paper (4 hidden
-layers x 50 units, tanh, Xavier init). That gives P ~ 1.57e4, so full SVD
-of the P x P Gram matrix is not affordable -- randomized SVD is necessary.
+Net architecture: shallow dual-net MLP with 2 hidden layers x 20 units,
+tanh, Xavier init. That gives P ~ 1.4e3, much smaller than the full net.
 
-Interior sample size: N_r = 1000 (so J has 2000 rows x ~1.57e4 columns,
-~125 MB in float32). The alpha-scaling law is a claim about the *spectrum*
+Interior sample size: N_r = 1000 (so J has 2000 rows x ~1.4e3 columns,
+~11 MB in float32). The alpha-scaling law is a claim about the *spectrum*
 of J and is unchanged by this choice of N_r. If you want N_r = 2500 as
 elsewhere, bump N_R_EXP1 below (memory will ~double).
 
@@ -64,7 +63,6 @@ try:
         total_loss,
     )
 except ImportError:
-    # Allow running this file directly: python experiments/exp1_conditioning_v2.py
     from common import (
         Formulation,
         ManufacturedSolution,
@@ -139,7 +137,7 @@ def sigma_extrema(J: torch.Tensor) -> tuple[float, float]:
 def one_point(alpha: float, formulation: Formulation, seed: int, device, snapshot_iter: int):
     torch.manual_seed(seed)
     mms = ManufacturedSolution(alpha)
-    net_y, net_p = build_networks(device, seed=seed)  # full net: 4x50 tanh
+    net_y, net_p = build_networks(device, seed=seed, width=20, depth=2)  # shallow net: 2x20 tanh
     x = sample_interior(N_R_EXP1, seed=seed + 1000, device=device)
 
     if snapshot_iter > 0:
