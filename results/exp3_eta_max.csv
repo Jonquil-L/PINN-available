@@ -1,0 +1,11 @@
+formulation,alpha,eta_max
+unscaled,1.0,0.1
+unscaled,0.01,0.1
+unscaled,0.0001,0.001
+unscaled,1e-06,0.003
+unscaled,1e-08,0.001
+scaled_raw,1.0,0.03
+scaled_raw,0.01,0.1
+scaled_raw,0.0001,3e-05
+scaled_raw,1e-06,3e-05
+scaled_raw,1e-08,3e-05

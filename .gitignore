@@ -6,11 +6,6 @@ __pycache__/
 .venv/
 venv/
 env/
-results/
-*.npz
-*.npy
-*.csv
-!experiments/**/expected_*.csv
 .vscode/
 .idea/
 Thumbs.db
