@@ -10,25 +10,28 @@ Equivalently, for kappa(J) = sigma_max / sigma_min:
 
 Key design choices
 ------------------
-1. Use a SMALL network (depth=2, width=20).
+1. Use a SMALL network (depth=2, width=20, total P ~ 1002 parameters).
    The alpha-scaling law is an algebraic property of the residual structure
-   and holds for any network size. The full network (depth=4, width=50) has
-   a base condition number ~10^{150} that overflows float64 and makes
-   sigma_min indistinguishable from zero.
+   and holds for any network size.
 
-2. Work in LOG SPACE throughout.
-   Store and plot log10(kappa); never materialise kappa(J^T J) as a float
-   (it can exceed 10^{300} even with the small net at extreme alpha).
+2. Use enough collocation points so that the system is OVER-DETERMINED:
+   2 * N_r > P.  With N_r = 1000, J has shape (2000, 1002).
+   This ensures that sigma_min is a genuine singular value of J, not an
+   artifact of the network's null space.  When the system is under-
+   determined (2*N_r < P), the Gram matrix J @ J^T has zero eigenvalues
+   from the null space, and sigma_min = sqrt(noise) ~ 10^{-160}, giving
+   a meaningless condition number of 10^{150+}.
 
-3. Use eigvalsh(J @ J.T) for exact singular values.
-   The Gram matrix is at most (2*N_r) x (2*N_r) = 600x600 — cheap and
-   deterministic. No ARPACK / randomised SVD needed.
+3. Use the CORRECT Gram factor for eigendecomposition:
+   - Over-determined (m >= n):  A = J^T J  (n x n), all n eigenvalues real
+   - Under-determined (m < n):  A = J J^T  (m x m), has zero eigenvalues
 
-4. Only plot the iter-0 snapshot.
-   The conditioning is an algebraic property, not a training outcome.
+4. Work in LOG SPACE throughout: store log10(kappa), never materialise
+   kappa(J^T J) as a float.
 
-Output
-------
+5. Only compute at iter-0 (algebraic property, not training outcome).
+
+Output:
     results/exp1_conditioning_v2.csv
     results/exp1_conditioning_v2.png
 """
@@ -59,25 +62,27 @@ from common import (
 
 # ---- Experiment-specific constants ----------------------------------------
 
-N_R_EXP1 = 1000           # interior collocation points (J has 2*N_R rows)
+# Network size: small enough that base kappa is manageable.
+EXP1_WIDTH = 20
+EXP1_DEPTH = 2
+# Total params P = 2 * [(2*20+20) + (20*20+20) + (20*1+1)] = 2 * 501 = 1002
 
-# Small network — see docstring for rationale.
-EXP1_WIDTH = 50
-EXP1_DEPTH = 4
+# Collocation points: MUST satisfy 2*N_r > P for over-determined system.
+# 2*1000 = 2000 > 1002 = P.  ✓
+N_R_EXP1 = 1000
 
-# Alpha sweep.  Drop 1e-8: even with the small net, kappa(J^T J) ~ 10^{28}
-# at alpha=1e-8, still representable but noisier.  Four points spanning 6
-# decades give a clean slope fit.
+# Alpha sweep
 ALPHAS_EXP1 = (1.0, 1e-2, 1e-4, 1e-6)
 
-SEEDS_EXP1 = (0, 1, 2)   # nearly deterministic at init; 3 seeds suffice
+# Seeds (nearly deterministic at init; 3 seeds suffice)
+SEEDS_EXP1 = (0, 1, 2)
 
 
 # ---------------------------------------------------------------------------
 # Jacobian assembly  (reverse-mode, row-by-row, float64 on CPU)
 # ---------------------------------------------------------------------------
 def assemble_jacobian(net_y, net_p, x, mms, formulation) -> torch.Tensor:
-    """Build J ∈ R^{2·N_r × P}, one backward pass per residual entry."""
+    """Build J in R^{2*N_r x P}, one backward pass per residual entry."""
     r1, r2 = residuals(net_y, net_p, x, mms, formulation)
     r = torch.cat([r1.reshape(-1), r2.reshape(-1)])
     params = param_list(net_y, net_p)
@@ -97,14 +102,28 @@ def assemble_jacobian(net_y, net_p, x, mms, formulation) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
-# Extremal singular values via eigvalsh of the smaller Gram factor
+# Extremal singular values via eigendecomposition of the CORRECT Gram factor.
+#
+# For J of shape (m, n):
+#   if m >= n (over-determined):  A = J^T J  (n x n)
+#       All n eigenvalues are squared singular values — sigma_min is real.
+#   if m < n  (under-determined): A = J J^T  (m x m)
+#       Has zero eigenvalues from null space — sigma_min is garbage.
 # ---------------------------------------------------------------------------
 def sigma_extrema(J: torch.Tensor) -> tuple[float, float]:
-    """Return (sigma_max, sigma_min) from the eigenvalues of J J^T."""
-    J_np = J.numpy()                        # already float64 on CPU
-    A = J_np @ J_np.T                       # shape (2*N_r, 2*N_r)
-    eigs = np.linalg.eigvalsh(A)            # ascending order
-    eigs = np.clip(eigs, 0.0, None)         # clamp negative numerical noise
+    J_np = J.numpy()
+    m, n = J_np.shape
+
+    if m >= n:
+        # Over-determined: J^T J gives all n genuine squared singular values
+        A = J_np.T @ J_np     # shape (n, n)
+    else:
+        # Under-determined: J J^T — sigma_min will be unreliable
+        A = J_np @ J_np.T     # shape (m, m)
+
+    eigs = np.linalg.eigvalsh(A)       # ascending order
+    eigs = np.clip(eigs, 0.0, None)    # clamp negative numerical noise
+
     sigma_max = float(np.sqrt(eigs[-1]))
     sigma_min = float(np.sqrt(max(eigs[0], 1e-300)))
     return sigma_max, sigma_min
@@ -121,14 +140,13 @@ def _to_cpu_f64(net_y, net_p, x):
 
 
 # ---------------------------------------------------------------------------
-# One data point  →  log10(kappa_J)  and  log10(kappa_JTJ)
+# One data point -> log10(kappa_J), log10(kappa_JTJ)
 # ---------------------------------------------------------------------------
 def one_point(
     alpha: float,
     formulation: Formulation,
     seed: int,
     device: torch.device,
-    snapshot_iter: int,
 ) -> dict:
     torch.manual_seed(seed)
     mms = ManufacturedSolution(alpha)
@@ -137,22 +155,17 @@ def one_point(
     )
     x = sample_interior(N_R_EXP1, seed=seed + 1000, device=device)
 
-    # Optional warm-up training (not used when snapshot_iter == 0)
-    if snapshot_iter > 0:
-        opt = torch.optim.Adam(param_list(net_y, net_p), lr=1e-3)
-        for _ in range(snapshot_iter):
-            opt.zero_grad()
-            loss = total_loss(net_y, net_p, x, mms, formulation)
-            loss.backward()
-            opt.step()
-
     # Move to CPU float64 for spectral analysis
     ny64, np64, x64 = _to_cpu_f64(net_y, net_p, x)
 
     J = assemble_jacobian(ny64, np64, x64, mms, formulation)
+    m, n = J.shape
+    status = "OVER-determined ✓" if m >= n else "UNDER-determined ✗"
+    print(f"    J shape: ({m}, {n})  {status}")
+
     s_max, s_min = sigma_extrema(J)
 
-    # ---- Work in log space: never form kappa_JTJ as a plain float ----
+    # Work in log space — never form kappa^2 as a float
     log10_kJ   = math.log10(s_max) - math.log10(s_min)
     log10_kJTJ = 2.0 * log10_kJ
 
@@ -161,12 +174,12 @@ def one_point(
         "sigma_min":       s_min,
         "log10_kappa_J":   log10_kJ,
         "log10_kappa_JTJ": log10_kJTJ,
-        "J_shape":         tuple(J.shape),
+        "J_shape":         (m, n),
     }
 
 
 # ---------------------------------------------------------------------------
-# Main sweep
+# Main
 # ---------------------------------------------------------------------------
 def main():
     device = pick_device()
@@ -180,22 +193,20 @@ def main():
 
     for formulation in formulations:
         for alpha in ALPHAS_EXP1:
-            log_kJ_list: list[float] = []
+            log_kJ_list:   list[float] = []
             log_kJTJ_list: list[float] = []
-            smax_list: list[float] = []
-            smin_list: list[float] = []
+            smax_list:     list[float] = []
+            smin_list:     list[float] = []
 
             for seed in SEEDS_EXP1:
                 ts = time.time()
-                r = one_point(alpha, formulation, seed, device,
-                              snapshot_iter=0)
+                r = one_point(alpha, formulation, seed, device)
                 log_kJ_list.append(r["log10_kappa_J"])
                 log_kJTJ_list.append(r["log10_kappa_JTJ"])
                 smax_list.append(r["sigma_max"])
                 smin_list.append(r["sigma_min"])
                 print(
-                    f"{formulation:<10s}  alpha={alpha:.0e}  seed={seed}  "
-                    f"J={r['J_shape']}  "
+                    f"  {formulation:<10s}  alpha={alpha:.0e}  seed={seed}  "
                     f"s_max={r['sigma_max']:.3e}  "
                     f"s_min={r['sigma_min']:.3e}  "
                     f"log10 k(J)={r['log10_kappa_J']:.2f}  "
@@ -225,18 +236,12 @@ def main():
     print(f"Wrote {csv_path}")
 
     # ---- Plot -------------------------------------------------------------
-    #
-    # Two panels side-by-side.
-    #   Left:  log10 kappa(J)     vs  log10 alpha   (expected slopes -1, -0.5)
-    #   Right: log10 kappa(J^TJ)  vs  log10 alpha   (expected slopes -2, -1)
-    #
-    # y-axis is LINEAR (showing log10 values) — this avoids ever
-    # exponentiating back to kappa, which can overflow.
-    #
+    # Two panels: log10 kappa(J) and log10 kappa(J^T J) vs log10 alpha.
+    # y-axis is LINEAR (log10 values) — no exponentiation, no overflow.
+
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
     panel_spec = [
-        # (mean_key, std_key, y-label, {formulation: expected_slope})
         ("log10_kJ_mean",   "log10_kJ_std",
          r"$\log_{10}\;\kappa(J)$",
          {"unscaled": -1.0, "scaled_raw": -0.5}),
@@ -260,18 +265,16 @@ def main():
             mu    = np.array([r[m_key] for r in data])
             sd    = np.array([r[s_key] for r in data])
 
-            # Linear fit:  log10(kappa) = slope * log10(alpha) + intercept
+            # Linear fit: log10(kappa) = slope * log10(alpha) + intercept
             slope, intercept = np.polyfit(log_a, mu, 1)
             exp_slope = expected[formulation]
 
-            # Plot data points with error bars
             ax.errorbar(
                 log_a, mu, yerr=sd,
                 fmt=f"{marker}-", color=color, capsize=4, lw=1.5,
                 label=(f"{formulation}  "
                        f"(fit {slope:+.2f},  expect {exp_slope:+.1f})"),
             )
-
             # Overlay the linear fit
             la_fit = np.linspace(log_a.min(), log_a.max(), 50)
             ax.plot(la_fit, intercept + slope * la_fit,
@@ -284,7 +287,7 @@ def main():
 
     fig.suptitle(
         "Experiment 1 — Jacobian conditioning vs "
-        r"$\alpha$  (depth-2, width-20 net, iter 0)"
+        r"$\alpha$  (depth-2, width-20 net, $N_r$=1000, iter 0)"
         "\n"
         r"Expected slopes:  $\kappa(J)$: unscaled $-1$, scaled $-0.5$"
         r"  ·  $\kappa(J^\top\! J)$: unscaled $-2$, scaled $-1$",
