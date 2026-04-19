@@ -25,21 +25,36 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from .common import (
-    ALPHAS_STANDARD,
-    ManufacturedSolution,
-    build_networks,
-    param_list,
-    pick_device,
-    sample_interior,
-    total_loss,
-)
+try:
+    from .common import (
+        ALPHAS_STANDARD,
+        Formulation,
+        ManufacturedSolution,
+        build_networks,
+        param_list,
+        pick_device,
+        sample_interior,
+        total_loss,
+    )
+except ImportError:
+    # Allow direct execution: python experiments/exp3_stable_lr.py
+    from common import (  # type: ignore[no-redef]
+        ALPHAS_STANDARD,
+        Formulation,
+        ManufacturedSolution,
+        build_networks,
+        param_list,
+        pick_device,
+        sample_interior,
+        total_loss,
+    )
 
 ITERS = 20_000
+PRINT_EVERY = 1_000
 LR_SWEEP = (1e-1, 3e-2, 1e-2, 3e-3, 1e-3, 3e-4, 1e-4, 3e-5, 1e-5, 1e-6)
 
 
-def run_trial(alpha: float, formulation: str, lr: float, seed: int, device) -> bool:
+def run_trial(alpha: float, formulation: Formulation, lr: float, seed: int, device) -> bool:
     torch.manual_seed(seed)
     mms = ManufacturedSolution(alpha)
     net_y, net_p = build_networks(device, seed=seed)
@@ -50,6 +65,11 @@ def run_trial(alpha: float, formulation: str, lr: float, seed: int, device) -> b
     for it in range(ITERS):
         opt.zero_grad()
         loss = total_loss(net_y, net_p, x, mms, formulation)
+        if it % PRINT_EVERY == 0:
+            print(
+                f"[{formulation} a={alpha:.0e} lr={lr:.0e} seed={seed}] "
+                f"iter {it:5d}/{ITERS} loss={loss.item():.3e}"
+            )
         if not torch.isfinite(loss):
             return False
         loss.backward()
@@ -82,7 +102,8 @@ def main():
     out_dir.mkdir(exist_ok=True)
 
     rows = []
-    for formulation in ("unscaled", "scaled"):
+    formulations: tuple[Formulation, Formulation] = ("unscaled", "scaled")
+    for formulation in formulations:
         for alpha in ALPHAS_STANDARD:
             eta_max = 0.0
             for lr in sorted(LR_SWEEP, reverse=True):

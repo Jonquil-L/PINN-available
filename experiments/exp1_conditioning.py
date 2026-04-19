@@ -26,17 +26,33 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from .common import (
-    ALPHAS_STANDARD,
-    ManufacturedSolution,
-    build_networks,
-    flat_grad,
-    param_list,
-    pick_device,
-    residuals,
-    sample_interior,
-    total_loss,
-)
+try:
+    from .common import (
+        ALPHAS_STANDARD,
+        Formulation,
+        ManufacturedSolution,
+        build_networks,
+        flat_grad,
+        param_list,
+        pick_device,
+        residuals,
+        sample_interior,
+        total_loss,
+    )
+except ImportError:
+    # Allow direct execution: python experiments/exp1_conditioning.py
+    from common import (  # type: ignore[no-redef]
+        ALPHAS_STANDARD,
+        Formulation,
+        ManufacturedSolution,
+        build_networks,
+        flat_grad,
+        param_list,
+        pick_device,
+        residuals,
+        sample_interior,
+        total_loss,
+    )
 
 
 def assemble_jacobian(net_y, net_p, x, mms, formulation):
@@ -64,7 +80,7 @@ def condition_number(J: torch.Tensor) -> float:
     return (s_max / s_min) ** 2
 
 
-def one_point(alpha: float, formulation: str, seed: int, device, iters_before_snapshot: int):
+def one_point(alpha: float, formulation: Formulation, seed: int, device, iters_before_snapshot: int):
     torch.manual_seed(seed)
     mms = ManufacturedSolution(alpha)
     # Small net keeps SVD tractable; the alpha-scaling we are measuring is
@@ -86,6 +102,10 @@ def one_point(alpha: float, formulation: str, seed: int, device, iters_before_sn
 
 def main():
     device = pick_device()
+    if device.type == "mps":
+        # This experiment forms dense Jacobians and runs float64 SVD snapshots.
+        # Keep execution on CPU to avoid MPS float64 limitations.
+        device = torch.device("cpu")
     out_dir = Path("results")
     out_dir.mkdir(exist_ok=True)
 

@@ -4,12 +4,6 @@ Claim: For the unscaled system (1.4), the ratio
     rho(phi) = ||grad_phi L_eq1|| / ||grad_phi L_eq2||
 is off by roughly alpha^-2; for the scaled system (1.5) it is O(1).
 
-This is a DIAGNOSTIC, so we use the raw residuals of (1.5) -- formulation
-"scaled_raw" in common.py -- not the loss-normalised "scaled" variant.
-The 1/a^{3/4} and 1/a^{1/4} factors on "scaled" are a legitimate training
-preconditioner, but they also rescale the very gradients we want to measure
-and would hide the balance property of the raw (1.5) system.
-
 Procedure: train each (alpha, formulation) with Adam(lr=1e-3) for 10000
 iterations, recording rho every 100 iterations. Additionally, save per-layer
 histograms of grad L_eq1 and grad L_eq2 at iteration 10000 for alpha=1e-4.
@@ -31,23 +25,39 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from .common import (
-    ALPHAS_STANDARD,
-    ManufacturedSolution,
-    build_networks,
-    flat_grad,
-    loss_terms,
-    param_list,
-    pick_device,
-    sample_interior,
-)
+try:
+    from .common import (
+        ALPHAS_STANDARD,
+        Formulation,
+        ManufacturedSolution,
+        build_networks,
+        flat_grad,
+        loss_terms,
+        param_list,
+        pick_device,
+        sample_interior,
+    )
+except ImportError:
+    # Allow direct execution: python experiments/exp2_gradient_balance.py
+    from common import (  # type: ignore[no-redef]
+        ALPHAS_STANDARD,
+        Formulation,
+        ManufacturedSolution,
+        build_networks,
+        flat_grad,
+        loss_terms,
+        param_list,
+        pick_device,
+        sample_interior,
+    )
 
-ITERS = 10_000
+ITERS = 5000
 RECORD_EVERY = 100
+PRINT_EVERY = 1_000
 SEEDS = (0, 1, 2)
 
 
-def run_one(alpha: float, formulation: str, seed: int, device, collect_layer_hists: bool):
+def run_one(alpha: float, formulation: Formulation, seed: int, device, collect_layer_hists: bool):
     torch.manual_seed(seed)
     mms = ManufacturedSolution(alpha)
     net_y, net_p = build_networks(device, seed=seed)
@@ -67,6 +77,7 @@ def run_one(alpha: float, formulation: str, seed: int, device, collect_layer_his
     for it in range(ITERS + 1):
         opt.zero_grad()
         l1, l2 = loss_terms(net_y, net_p, x, mms, formulation)
+        loss = l1 + l2
 
         if it % RECORD_EVERY == 0:
             g1 = flat_grad(l1, params, retain_graph=True)
@@ -84,7 +95,12 @@ def run_one(alpha: float, formulation: str, seed: int, device, collect_layer_his
                         layer_grads_eq1[name] = g1p.detach().cpu().numpy().ravel()
                         layer_grads_eq2[name] = g2p.detach().cpu().numpy().ravel()
 
-        loss = l1 + l2
+        if it % PRINT_EVERY == 0:
+            print(
+                f"[{formulation} a={alpha:.0e} seed={seed}] "
+                f"iter {it:5d}/{ITERS} loss={loss.item():.3e}"
+            )
+
         loss.backward()
         opt.step()
 
@@ -99,14 +115,10 @@ def main():
     iters_axis = np.arange(0, ITERS + 1, RECORD_EVERY)
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
-    colors = plt.cm.viridis(np.linspace(0, 0.9, len(ALPHAS_STANDARD)))
+    colors = plt.get_cmap("viridis")(np.linspace(0, 0.9, len(ALPHAS_STANDARD)))
 
-    # Diagnostic uses the RAW residuals of (1.5), not the loss-normalised
-    # "scaled" form. The 1/a^{3/4} and 1/a^{1/4} factors on "scaled" are a
-    # legitimate training-time preconditioner but they also rescale the
-    # gradients whose ratio rho we are measuring here, which would hide the
-    # true balance property of (1.5). See common.py for the two branches.
-    for ax, formulation in zip(axes, ("unscaled", "scaled_raw")):
+    formulations: tuple[Formulation, Formulation] = ("unscaled", "scaled")
+    for ax, formulation in zip(axes, formulations):
         for c, alpha in zip(colors, ALPHAS_STANDARD):
             seed_runs = []
             hist_eq1, hist_eq2 = {}, {}
@@ -146,8 +158,7 @@ def main():
         if formulation == "unscaled":
             ax.set_ylabel(r"$\rho(\phi)=\|\nabla L_{\mathrm{eq}_1}\|/\|\nabla L_{\mathrm{eq}_2}\|$")
         ax.axhline(1.0, color="k", lw=0.5, ls=":")
-        _system_label = {"unscaled": "1.4", "scaled_raw": "1.5"}[formulation]
-        ax.set_title(f"{formulation} — ({_system_label})")
+        ax.set_title(f"{formulation} — (1.{'4' if formulation=='unscaled' else '5'})")
         ax.grid(True, which="both", alpha=0.3)
         ax.legend(fontsize=8, loc="best")
 
